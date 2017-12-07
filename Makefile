@@ -1,5 +1,5 @@
 
-all: build run
+all: build run report
 
 run:
 	cd scala-plugin && make run
@@ -12,3 +12,6 @@ build:
 	cd broadcast-join && make build
 	cd plugin-benchmark && make build
 	cd benchmarks && make build
+
+report:
+	Rscript -e "rmarkdown::render('Report.Rmd')"
