@@ -3,8 +3,8 @@ all: build run
 
 run:
 	cd scala-plugin && make run
-	cd broadcast-join && make run
 	cd plugin-benchmark && make run
+	cd broadcast-join && make run
 	cd benchmarks && make run
 
 build:
