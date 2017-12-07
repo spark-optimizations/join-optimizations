@@ -1,0 +1,12 @@
+[submodule "scala-plugin"]
+	path = scala-plugin
+	url = https://github.com/spark-optimizations/scala-plugin.git
+[submodule "broadcast-join"]
+	path = broadcast-join
+	url = https://github.com/spark-optimizations/broadcast-join.git
+[submodule "plugin-benchmark"]
+	path = plugin-benchmark
+	url = https://github.com/spark-optimizations/plugin-benchmark.git
+[submodule "benchmarks"]
+	path = benchmarks
+	url = https://github.com/spark-optimizations/benchmarks.git
