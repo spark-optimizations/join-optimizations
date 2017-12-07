@@ -7,8 +7,6 @@ output:
     fig_crop: no
     fig_width: 5
     latex_engine: xelatex
-  html_document:
-    df_print: paged
 geometry: left=1cm,right=1cm,top=1cm,bottom=2cm
 ---
 
@@ -240,7 +238,9 @@ plot_both_time <- function(plot_d, title, xLabel, yLabel) {
           geom_point(size = 2.5) +
           geom_line() +
           scale_x_continuous(breaks=plot_d$Size, trans="log2", 
-                             labels = function(x) paste(x, "mb")) +
+                             labels = function(x) ifelse((x/1024)>=1,
+                                                         paste(round(x/1024,1), "gb"),
+                                                         paste(x, "mb"))) +
           theme_bw() +
           scale_shape_manual(values=c(17,17,15,15)) + 
           theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
@@ -326,8 +326,8 @@ plot_both_delta_d <- union(big_delta, r_delta)
 
 plot_vs_time_d <- union(vs_rs_bj_exec, vs_rs_shuffle_exec)
 
-bothTimePlot <- plot_both_time(plot_both_time_d, "a) Fixed Size Small RDD", "Big RDD Size (MB)", "Time (sec)")
-vsTimePlot <- plot_vs_time(plot_vs_time_d, "b) Fixed Size Big RDD", "Small RDD Size (MB)", "Time (sec)")
+bothTimePlot <- plot_both_time(plot_both_time_d, "a) Fixed Size Small RDD", "Big RDD Size", "Time (sec)")
+vsTimePlot <- plot_vs_time(plot_vs_time_d, "b) Fixed Size Big RDD", "Small RDD Size", "Time (sec)")
 
 grid.arrange(bothTimePlot, vsTimePlot, ncol=2, widths=c(1.3, 1), bottom="Figure 4: Broadcast Join Benchmarks")
 ```
