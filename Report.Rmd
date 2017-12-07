@@ -220,9 +220,117 @@ grid.arrange(g3, ty, ncol=2, widths=c(30, 1), bottom="Figure 3: Compiler Plugin 
 
 Similarly, Fig 3 (Time) shows execution times for optimized (depicted as plugin) and unoptimized (depicted as control) programs. Each block in heatmaps shows median execution time in seconds for different configurations of columns in `rdd1`. The patterns observed for shuffled data in both control and plugin plots also exist for execution times. This indicates that there is high correlation between shuffled data and execution time.
 
+
+```{r cache=TRUE,echo=F, results = 'asis', warning=F, message=F}
+raw_to_plot_data_exec <- function(d, runType, mulFactor) {
+  colnames(d) <- c('ID', 'exec', 'Size')
+  d %>%
+    group_by(Size) %>% 
+      summarise(TimeMean=mean(exec), TimeMedian=median(exec), Count = n()) -> plot_data
+  plot_data$Size <- (2^plot_data$Size)*mulFactor
+  runTypeCol <- cbind(rep(runType, count(plot_data)))
+  plot_data$RunType <- runTypeCol
+  return(plot_data)
+}
+
+plot_both_time <- function(plot_d, title, xLabel, yLabel) {
+  titleCol <- rep(title, count(plot_d))
+  plot_d$Title <- titleCol
+  ggplot(data = plot_d, aes(x = Size, y = TimeMedian, color = RunType, shape = RunType)) +
+          geom_point(size = 2.5) +
+          geom_line() +
+          scale_x_continuous(breaks=plot_d$Size, trans="log2", 
+                             labels = function(x) paste(x, "mb")) +
+          theme_bw() +
+          scale_shape_manual(values=c(17,17,15,15)) + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                plot.title = element_blank(),
+                #axis.title.x = element_blank(),
+                axis.title.x = element_text(margin = margin(t=10)),
+                plot.margin=margin(r=20),
+                axis.text=element_text(size=9), 
+                axis.title=element_text(size=10),
+                strip.text = element_text(size = 12, face = "bold"),
+                legend.text=element_text(size=10),
+                legend.position="left",
+                legend.title = element_blank()) +
+          facet_grid(. ~ Title, switch = "y") +
+          labs(x = xLabel, y = yLabel) -> p
+  return(p)
+}
+
+plot_vs_time <- function(plot_d, title, xLabel, yLabel) {
+  titleCol <- rep(title, count(plot_d))
+  plot_d$Title <- titleCol
+  ggplot(data = plot_d, aes(x = Size, y = TimeMedian, color = RunType, shape = RunType)) +
+          geom_point(size = 2.5) +
+          geom_line() +
+          scale_x_continuous(breaks=plot_d$Size, trans="log2", 
+                             labels = function(x) paste(x, "mb")) +
+          theme_bw() +
+          scale_shape_manual(values=c(17,15)) + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                plot.title = element_blank(),
+                #axis.title.x = element_blank(),
+                axis.title.x = element_text(margin = margin(t=10)),
+                axis.text=element_text(size=9), 
+                plot.margin=margin(l=20),
+                axis.title=element_text(size=10),
+                strip.text = element_text(size = 12, face = "bold"),
+                legend.text=element_text(size=10),
+                legend.title = element_blank(),
+                legend.position="right") +
+          facet_grid(. ~ Title, switch = "y") +
+          labs(x = xLabel, y = yLabel) -> p
+  return(p)
+}
+```
+
 ## Optimization 2: Broadcast Join
 
 **Hypothesis**: Out of two RDDs on which join is to be performed, if one RDD is much smaller than the other and it can fit in memory, then broadcasting the small RDD to all the nodes and then performing join reduces the amount of data being shuffled and improves join performance.
+
+```{r cache=TRUE,echo=F, results = 'asis', warning=F, message=F}
+data_path <- 'benchmarks/output/stats/'
+
+big_bj_exec <- read.csv(paste0(data_path, 'vb_big_bj_exec'), sep = ";", header = FALSE)
+big_shuffle_exec <- read.csv(paste0(data_path, 'vb_big_shuffle_exec'), sep = ";", header = FALSE)
+rs_bj_exec <- read.csv(paste0(data_path, 'vb_rs_bj_exec'), sep = ";", header = FALSE)
+rs_shuffle_exec <- read.csv(paste0(data_path, 'vb_rs_shuffle_exec'), sep = ";", header = FALSE)
+
+big_bj_exec <- raw_to_plot_data_exec(big_bj_exec, "BB: BJ", 128)
+big_shuffle_exec <- raw_to_plot_data_exec(big_shuffle_exec, "BB: Shuffle", 128)
+rs_bj_exec <- raw_to_plot_data_exec(rs_bj_exec, "BS: BJ", 128)
+rs_shuffle_exec <- raw_to_plot_data_exec(rs_shuffle_exec, "BS: Shuffle", 128)
+
+vs_rs_bj_exec <- read.csv(paste0(data_path, 'vs_rs_bj_exec'), sep = ";", header = FALSE)
+vs_rs_shuffle_exec <- read.csv(paste0(data_path, 'vs_rs_shuffle_exec'), sep = ";", header = FALSE)
+
+vs_rs_bj_exec <- raw_to_plot_data_exec(vs_rs_bj_exec, "BJ", 1)
+vs_rs_shuffle_exec <- raw_to_plot_data_exec(vs_rs_shuffle_exec, "Shuffle", 1)
+```
+
+```{r cache=TRUE,echo=F, results = 'asis', warning=F, message=F, fig.align="center", fig.width=12, fig.height=3}
+big_plot_d <- union(big_bj_exec, big_shuffle_exec)
+r_plot_d <- union(rs_bj_exec, rs_shuffle_exec)
+
+
+big_delta <- subset(big_bj_exec, select = -c(TimeMean, Count))
+r_delta <- subset(rs_bj_exec, select = -c(TimeMean, Count))
+
+big_delta$TimeMedian <- ((big_shuffle_exec$TimeMedian - big_bj_exec$TimeMedian) / big_shuffle_exec$TimeMedian)*100
+r_delta$TimeMedian <- ((rs_shuffle_exec$TimeMedian - rs_bj_exec$TimeMedian) / rs_shuffle_exec$TimeMedian)*100
+
+plot_both_time_d <- union(big_plot_d, r_plot_d)
+plot_both_delta_d <- union(big_delta, r_delta)
+
+plot_vs_time_d <- union(vs_rs_bj_exec, vs_rs_shuffle_exec)
+
+bothTimePlot <- plot_both_time(plot_both_time_d, "a) Fixed Size Small RDD", "Big RDD Size (MB)", "Time (sec)")
+vsTimePlot <- plot_vs_time(plot_vs_time_d, "b) Fixed Size Big RDD", "Small RDD Size (MB)", "Time (sec)")
+
+grid.arrange(bothTimePlot, vsTimePlot, ncol=2, widths=c(1.3, 1), bottom="Figure 4: Broadcast Join Benchmarks")
+```
 
 ### Approach
 
@@ -247,6 +355,18 @@ Moreover, broadcast join requires that the small RDD can fit in memory on all th
 If one of the target RDDs is determined to be smaller than threshold by Size Estimator, we broadcast it to all nodes to be cached. Once cached we only need to map through the bigger RDD to lookup its keys in the cache to join records. This in turn eliminates shuffling of bigger RDD and a reduce stage.
 
 ### Benchmarks
+
+Figure 4 shows benchmark results for our broadcast join implementation for varying sizes of both small RDD (smaller than threshold) and big RDD. The varying RDD size is shown on X-axis and the other RDD is kept constant. Y-axis depicts the execution time taken to perform join. 
+
+**Fixed size small RDD**
+
+To measure the impact of increasing size of bigger RDD on broadcast join, we keep the size of small RDD constant and vary big RDD. Figure 4(a) shows execution times of joins for this experiment in two different scenarios.
+
+The **first scenario** is when one RDD is small and the other RDD is big marked as squares. `BS:Shuffle` shows the execution time for shuffle RDD join in this scenario for varying sizes of big RDD. `BS:BJ` similarly shows the execution time for broadcast join. This is an ideal scenario for a broadcast join. Therefore, as the size of the big RDD increases, broadcast join yields better performance. This is because, shuffle join has to send more data over network as the size of big RDD increases. 
+
+The **second scenario** is less ideal for broadcast join. In this scenario, both RDDs are big and therefore can't be broadcast. The execution times for this scenario are marked as triangles in Fig 4(a), where `BB:BJ` means execution times for broadcast join and `BB:Shuffle` means execution times for shuffle joins. Here, as the size of big RDD increases, shuffle join yields better performance. We believe that this is because of the estimation overhead incurred by the size estimator, which is applied twice for both big RDDs.
+
+**Fixed size big RDD**
 
 ### Limitations
 
