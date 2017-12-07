@@ -2,6 +2,16 @@
 
 This repository is the master repository for all the different repositories used for this project. 
 
+# Cloning
+
+To clone all the submodules included in this project, clone this repository with the following command:
+
+    git clone --recursive https://github.com/spark-optimizations/join-optimizations.git
+    
+To generate the report use the following command:
+
+    make report
+
 Here's the summary of all the submodule repositories. To know more about these submodules, please read their `README` files:
 
 - [Scala compiler plugin](https://github.com/spark-optimizations/scala-plugin) 
@@ -19,7 +29,6 @@ Here's the summary of all the submodule repositories. To know more about these s
 - [Broadcast Join Benchmarks](https://github.com/spark-optimizations/benchmarks)
 
   - This repository contains benchmarking code for broadcast join
-
 
 # Authors
 
