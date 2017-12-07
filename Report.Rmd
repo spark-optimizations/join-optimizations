@@ -364,9 +364,11 @@ To measure the impact of increasing size of bigger RDD on broadcast join, we kee
 
 The **first scenario** is when one RDD is small and the other RDD is big marked as squares. `BS:Shuffle` shows the execution time for shuffle RDD join in this scenario for varying sizes of big RDD. `BS:BJ` similarly shows the execution time for broadcast join. This is an ideal scenario for a broadcast join. Therefore, as the size of the big RDD increases, broadcast join yields better performance. This is because, shuffle join has to send more data over network as the size of big RDD increases. 
 
-The **second scenario** is less ideal for broadcast join. In this scenario, both RDDs are big and therefore can't be broadcast. The execution times for this scenario are marked as triangles in Fig 4(a), where `BB:BJ` means execution times for broadcast join and `BB:Shuffle` means execution times for shuffle joins. Here, as the size of big RDD increases, shuffle join yields better performance. We believe that this is because of the estimation overhead incurred by the size estimator, which is applied twice for both big RDDs.
+The **second scenario** is less ideal for broadcast join. In this scenario, both RDDs are big and therefore can't be broadcast. The execution times for this scenario are marked as triangles in Fig 4(a), where `BB:BJ` means execution times for broadcast join and `BB:Shuffle` means execution times for shuffle joins. Here, as the size of big RDD increases, shuffle join yields better performance. We believe that this is because of the estimation overhead incurred by the size estimator.
 
 **Fixed size big RDD**
+
+To understand the ideal broadcast size for small RDD, we keep big RDD constant and vary the size of small RDD and plot the execution time of join operation for different sizes of small RDD. Figure 4(b) shows execution times for this set up. Here, broadcast join times are marked as triangles and shuffle join times are marked as squares. With our local configuration, we observed that once the size of broadcast RDD increases 256MB performance gains obtained using broadcast join start diminishing and shuffle join improves.
 
 ### Limitations
 
