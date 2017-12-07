@@ -376,3 +376,11 @@ To understand the ideal broadcast size for small RDD, we keep big RDD constant a
 - If both the RDDs are bigger than memory threshold, broadcast join incurs extra cost of performing size estimation on both the RDDs.
 
 # Conclusion
+
+1. Why spark doesn't do this optimization? We started our project with this simple question. We found that for doing any optimization like this spark needs access to source code and recompile lambdas and/or functions to an optimal code.
+1. We also found Scala compiler plugin could prove to be a very useful Spark companion in optimizing job and with considerable shuffle saves for poorly written jobs. Provided appropriate documentations become available for Scala compiler plugin for new developers to get onboarded.
+1. Broadcast Join seems to outperform shuffle join when one RDD is small than $256 mb$ in our tests. It could prove very useful in case of unknown RDD sizes, when actual RDD size is suspected to be small while writing the job. 
+
+# Future Work
+
+1. To overcome restriction to view the source code. We would like to explore analyzing generated source from Byte Code decompiler. We could then move this whole logic to spark DAG creation as initially planned.
