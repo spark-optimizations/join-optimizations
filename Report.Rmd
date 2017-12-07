@@ -1,0 +1,256 @@
+---
+title: "Spark Join Optimizations"
+author: "Shabbir Hussain, Manthan Thakar, Tirthraj Parmar"
+date: "December 5, 2017"
+output:
+  pdf_document:
+    fig_crop: no
+    fig_width: 5
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+geometry: left=1cm,right=1cm,top=1cm,bottom=2cm
+---
+
+```{r setup, echo=F, results='hide', message=F, warning=F, cache=F}
+library("ggplot2")
+library("tidyr")
+library("knitr")
+library("kableExtra")
+library("scales")
+library("plyr")
+library("microbenchmark")
+library("reshape2")
+library("readr")
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+library("grid")
+library("gridBase")
+library("gridExtra")
+library("dplyr")
+library("png")
+
+g_legend<-function(aGplot){
+    tmp <- ggplot_gtable(ggplot_build(aGplot))
+    leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+    legend <- tmp$grobs[[leg]]
+    legend
+}
+```
+
+```{r  echo=F, message=F, warning=F, cache=F, results='hide'}
+data1 <- read.csv('plugin-benchmark/results/com_timing.csv', sep=" ", header = FALSE)
+data1 <- data1[, c("V1", "V2", "V3")]
+data1 <- data1 %>% mutate(V1=ifelse(V1=="com_reg", "Control", "Plugin"))
+
+colnames(data1) <- c("Type", "Metric", "Time")
+data1$Type <- as.factor(data1$Type)
+data1$Time  <- as.numeric(data1$Time)
+
+x = ggplot(data=data1, aes(x=Type, y=Time, fill="black")) +
+      geom_violin() + 
+      labs(x="", y="Time (sec)", title="Fig 2: Compilation time for program with and without plugin")  +
+      theme_bw() + theme(plot.title = element_text(size=8), legend.position = "none") +
+      scale_fill_grey() + 
+      scale_color_grey()
+```
+
+```{r echo=F, cache=TRUE, results='hide'}
+data <- read.csv('plugin-benchmark/results/run_timing.csv', sep="\t", header = FALSE)
+data <- data[, c("V1", "V3", "V4")]
+
+show_run_plots <- function(metricType, metricName, unit, scale=1, round=0, showx=TRUE, hColor){
+  dataRun <- subset(data, (substring(data$V1, 0, 3) == "run") & data$V3==metricType)
+  dataRun$V1 <- substring(dataRun$V1, 5)
+  dataRun %>%
+    group_by(V1) %>% 
+    summarise(Mean=mean(V4), Median=median(V4), count = n()) %>%
+    separate("V1", into = paste("V", 1:3, sep = "_")) -> dataRun
+  
+  colnames(dataRun) <- c("Type", "Tot", "Used", "Mean", "Median", "Count")
+  dataRun$Type <- as.factor(dataRun$Type)
+  dataRun$Tot  <- as.integer(dataRun$Tot)
+  dataRun$Used <- as.integer(dataRun$Used)
+  dataRun <- subset(dataRun, Tot!=0)
+  
+  dfReg <- subset(dataRun, Type=="reg")
+  dfPlu <- subset(dataRun, Type=="plugin")
+  
+  # Individual HeatMaps
+  
+  dataRun <- dataRun %>% mutate(Type=ifelse(Type=="reg", "Control", " Plugin"))
+  
+  g1 <- ggplot(data=dataRun, aes(x=reorder(as.factor(Tot), Tot), y=reorder(as.factor(Used), Used), fill=Median)) +
+        geom_tile(width=1, height=1) + 
+        scale_fill_gradient(low="white", high=hColor, name=metricName,
+                            labels=function(x) dollar_format(suffix=unit, prefix = "")(round(x/scale, round))) +
+        label_both(element_blank()) + 
+        facet_grid(.~Type) +
+        theme_bw() + theme(legend.position="left", 
+                          legend.title = element_blank(),
+                          plot.title = element_blank(), 
+                          axis.title.x = element_blank(),
+                          axis.title.y = element_blank(),
+                          axis.text.y = element_blank(),
+                          axis.ticks.y = element_blank())
+  
+  # Combined HeatMap
+  dfAll <- merge(x = dfReg, y = dfPlu, by = c("Tot", "Used"), all = FALSE)
+  dfAll$Fill <- round(((-dfAll$Median.y + dfAll$Median.x)*100/dfAll$Median.x), 0)
+
+  g3 <- ggplot(data=dfAll, aes(x=reorder(as.factor(Tot), Tot), y=reorder(as.factor(Used), Used), fill=Fill)) +
+      geom_tile(width=1, height=1) + 
+      scale_y_discrete(position = "right") +
+      scale_fill_gradient2(low=brewer.pal(3,"Set1")[1], mid="ivory", high=brewer.pal(11, "PiYG")[9],
+                           midpoint=0, name="Delta",
+                           labels=function(x) dollar_format(suffix = "%", prefix = "")(x)) +
+      label_both(element_blank()) + 
+      geom_text(aes(label=paste0(Fill, "%")),  size=2) +
+      facet_grid(.~ifelse(1==1, "Delta = (Plugin - Control)/Control",""), switch = "y") +
+      theme_bw() + theme(legend.position="none",
+                         plot.title = element_blank(), 
+                         axis.title.y = element_blank(),
+                         axis.title.x = element_blank())
+  if(showx==F){
+    g1 <- g1 + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+    g3 <- g3 + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  }
+  
+  t1 <- textGrob(metricName, gp = gpar(fontface = 3L, fontsize = 12), rot=90)
+  g1 <- arrangeGrob(t1, g1, ncol=2, widths=c(1, 30))
+  
+  r <- arrangeGrob(g1, g3, ncol=2, widths=c(2,1))
+  return(r)
+}
+```
+
+# Objective
+
+Optimizing Spark joins on Resilient Distributed Datasets (RDDs) by employing column-pruning and / or broadcast join wherever appropriate.
+
+# Join Optimization
+
+Join operation on RDDs can be expensive. We suspect that one of the biggest factors that affects join performance is the amount of data shuffled in the process. In order to alleviate excessive shuffling of data, we propose and implement two types of optimization, namely, **Column Pruning** and **Broadcast Join**. In the following sections, we discuss both of these approaches and present our findings.
+
+## Optimization 1: Column Pruning
+
+**Hypothesis**: Pruning unused columns (values in Pair-RDD) of an RDD before performing a join reduces the amount of data shuffled for join and improves join performance.
+
+### Approach
+
+At a higher-level, we need following steps to perform column pruning on a spark join.
+
+- **Identify target RDDs** Identify RDDs on which join is being performed.
+
+- **Obtain column Usage** The columns from each RDD that are used after join operation.
+
+- **Transform target RDDs** Using the column usage information, transform the target RDDs before join is performed.
+
+In order to capture information required to perform steps above, we build a compiler-plugin for Scala compiler. Scala compiler plugin gives us the facility to access the abstract syntax tree (AST) of the source code after different phases of the compiler. This information would be either completely missing or hard to obtain inside Spark's DAG scheduler. Hence, we believe that a compiler plugin is a better choice for our purposes.
+
+### Scala Compiler Plugin
+
+Scala compiler can be modified by building compiler plugins. Scala compiler has 25 phases including phases like `parser`, `typer`, `erasure`, etc. The compiler plugin can be placed before or after any of these phases. It can then be used to analyze and modify AST from the previous phase. We use this capability and place our compiler plugin `JoinOptimizer` after Scala compiler's `parser` phase.
+
+When a Scala program is compiled using `JoinOptimizer`, the plugin obtains the AST constructed by compiler's parser, at which point `JoinOptimizer` performs following steps:
+
+- Identify join operations in a Scala program using Scala's quasiquotes.
+- Iff a join operation is encountered:
+    - Capture the trees for target RDDs and the next `Transformation` that directly follows the `join`.
+    - Analyze this `Transformation`'s lambda and obtain column usage of target RDDs.
+    - Transform the tree before the `join` operation to insert a `mapValues` on target RDD that emits only used columns.
+
+```{r echo=F, cache=T, results="hide", fig.width=8, fig.height=2}
+code_image = rasterGrob(as.raster(readPNG("plugin-benchmark/results/code-snippet.png")))
+grid.arrange(code_image, x, ncol=2)
+```
+
+```{r echo=F, cache=TRUE, results="hide", fig.height=3, fig.width=8, eval=F}
+header1 = c("Processor", "RAM", "vCores", "Storage", "Spark", "Scala")
+header2 = c("2.7 GHz Intel Core i5", "8GB", "4", "256GB", "2.2.0", "2.11.11")
+config = data.frame(Config=header1, Value=header2)
+tg = tableGrob(config, 
+               theme = ttheme_default(core=list(bg_params = list(fill = brewer.pal(9, "Greys")[1:2],col=NA),
+               fg_params = list(fontface=3, fontsize=8)))) 
+h <- grobHeight(tg)
+w <- grobWidth(tg)
+tableText = textGrob("Table 1: Machine Configuration", y=unit(0.5,"npc") + h, gp=gpar(fontsize=8)) 
+grid.arrange(gTree(children=gList(tg, tableText)), x, ncol=2, widths=c(2,1), heights=c(10, 1))
+```
+
+The source code for optimized spark join that is yielded by following steps outlined above is shown in Fig 1.
+
+Two PairRDDs `rdd1` and `rdd2` are defined in line 1 and 2 in fig 1, both with key data type of `Long` and value data type of `Tuple5[Long, ...]`. Line 5 contains code that performs `join` on `rdd1` and `rdd2` and then uses the first column from `rdd1` and second column from `rdd2` inside the lambda enclosed in `mapValues`. It is quite obvious that 4 columns in both RDDs are unused after `join`. Hence, these unused columns can be pruned.
+
+Lines 8-10 show the code generated by our compiler plugin. It prunes the columns from both `rdd1` and `rdd2` before the `join` by adding an extra `mapValues` stage. Note that, for `rdd2` it uses a `null` value for first column since it is not used. To avoid rewriting user code `Transformation`s following joins we replace all unused indices in a `Tuple` with `null` values. We hypothesize that this would help save bytes and shuffles.
+
+### Benchmarks
+
+To measure the impact of `JoinOptimizer` plugin we compile same spark programs with and without the plugin. The spark program used for benchmarking performs joins between two RDDs, `rdd1` and `rdd2`. We tested multiple combinations of number of columns available in source RDD's and number columns used post `join` operation. Note that, these configurations are only varied for `rdd1` and for simplicity, we keep `rdd2` constant for all benchmarks. For all the configurations, we measure execution times and amount of data shuffled.
+
+All the benchmarks are run on a local machine with configuration: _2.7 GHz Intel Core i5 processor, 8 GB RAM, 4 vCores, 256GB SSD Storage, Spark 2.2.0, Scala 2.11.11_
+
+**Compilation Time**
+
+Fig 2 shows the distribution of compilation time for the same spark program with and without the compiler plugin. From the violin plot, it can be seen that for majority of distribution, compiler plugin adds overhead of about 2 seconds. In the worst case (for the outliers), this overhead can be more than 5 seconds.
+
+**Shuffled Data**
+
+Fig 3 (shuffle) shows the amount of data shuffled for both spark programs compiled with (depicted as Plugin) and without (depicted as Control) `JoinOptimizer`. Each block in heatmaps shows median kb shuffled for different configurations of columns. X-axis shows the total number of columns before `join` and Y-axis shows the used number of columns used post `join`. 
+
+From the Control plot, it can be observed that the amount of data shuffled stays roughly the same for any value on X-axis. This indicates that **in Control shuffle seems to be a function of total number of columns** in the source RDDs. In contrast, for the Plugin plot, the shuffled data increases only when the used number columns increases. It bolsters our initial hypothesis. If number of columns used are constant, regardless of number of total columns shuffled data stays almost constant. Thus, **in Plugin shuffle becomes a function of used number columns** in source RDDs. 
+
+Fig 3 also shows the delta for shuffle data between both control and plugin benchmarks. The highest gain in network efficiency of $89\%$ is observed when total number of columns in `rdd1` is $22\%$ and none of the columns are used after join. This means that the optimized code shuffles $89\%$ less data than its unoptimized counterpart. Moreover, the percentage gain increases horizontally from left to right for each value on Y-axis indicating the decrease in shuffling compared to unoptimized version, when total number of columns increase but number of columns used remains constant. Surprisingly, when there's only one column in RDD and none of the columns are used, optimized version shuffles $23\%$ more data than unoptimized version which was unexpected. This could be a limitation in our plugin implementation that converts the RDD values and maps the values as `Tuple22` with $22 \times null$ values.
+
+```{r fig.align="center", fig.height=3, fig.width=10, cache=F,echo=F, results = 'asis', warning=F, message=F}
+tx <- textGrob("Total # of columns", gp = gpar(fontface = 3L, fontsize = 8))
+ty <- textGrob("Used # of columns", gp = gpar(fontface = 3L, fontsize = 8), rot=90)
+
+g1 <- show_run_plots("real", metricName="Time", unit="ms", scale=1, round=1, hColor="maroon", showx=F)
+g2 <- show_run_plots("shuffle", metricName="Shuffle", unit="kb ", scale=1024, round=0, hColor="royalblue", showx=T)
+
+g3 <- arrangeGrob(g1, g2, tx, nrow=3, heights = c(10, 10, 1))
+
+grid.arrange(g3, ty, ncol=2, widths=c(30, 1), bottom="Figure 3: Compiler Plugin Benchmarks")
+```
+
+**Execution Time**
+
+Similarly, Fig 3 (Time) shows execution times for optimized (depicted as plugin) and unoptimized (depicted as control) programs. Each block in heatmaps shows median execution time in seconds for different configurations of columns in `rdd1`. The patterns observed for shuffled data in both control and plugin plots also exist for execution times. This indicates that there is high correlation between shuffled data and execution time.
+
+## Optimization 2: Broadcast Join
+
+**Hypothesis**: Out of two RDDs on which join is to be performed, if one RDD is much smaller than the other and it can fit in memory, then broadcasting the small RDD to all the nodes and then performing join reduces the amount of data being shuffled and improves join performance.
+
+### Approach
+
+Spark's join function by default performs a reduce-side join. Meaning, it shuffles records from both target RDDs having same keys to one node and then combines their data. But in situations where one of the RDDs is much smaller, this smaller RDD can be broadcast to all the nodes. Once the smaller RDD is transferred to each node, both RDDs can be joined by adding map stages. This eliminates an extra reduce step that is required in reduce-side joins. Although, broadcast join includes sending data to all the nodes upfront, it saves the bigger RDD from being shuffled. This is equivalent to performing a map-side join instead of spark's reduce-side join.
+
+The key components in this proposed approach are:
+
+**1. RDD Size Estimation**
+
+Estimating the size of target RDDs is instrumental in performing broadcast join. We have implemented a size estimator for RDDs that uses the following formula:
+
+$estimated\_size = size(N) \times R / N$
+
+Where $R$ is total number of rows in the RDD, and $size(N)$ gives size of $N$ sample rows fetched from each partition.
+
+Since this is an heuristic approach, it is prone to underestimation when rows contain variable number of columns. In such cases broadcasting an RDD might result in ungraceful job failure. Therefore, we keep the estimator configurable for the user, so that user can provide a custom size estimator according to data.
+
+Moreover, broadcast join requires that the small RDD can fit in memory on all the nodes. We assumed this property to be a configuration setting of cluster and we kept memory threshold configurable as well. If size of an RDD obtained using the given estimator, is smaller than the memory threshold, we perform broadcast join, otherwise spark's default shuffle-join is performed.
+
+**2. Performing map-side join**
+
+If one of the target RDDs is determined to be smaller than threshold by Size Estimator, we broadcast it to all nodes to be cached. Once cached we only need to map through the bigger RDD to lookup its keys in the cache to join records. This in turn eliminates shuffling of bigger RDD and a reduce stage.
+
+### Benchmarks
+
+### Limitations
+
+- Broadcast join is only useful when one of the RDDs can fit in memory.
+- If both the RDDs are bigger than memory threshold, broadcast join incurs extra cost of performing size estimation on both the RDDs.
+
+# Conclusion
