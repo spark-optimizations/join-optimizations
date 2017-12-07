@@ -14,11 +14,11 @@ Here's the summary of all the submodule repositories. To know more about these s
 
 - [Plugin Benchmarks](https://github.com/spark-optimizations/plugin-benchmark)
 
-  - This repository contains implementation of broadcast join on spark RDDs
+  - This repository contains benchmarking code for scala compiler plugin
 
 - [Broadcast Join Benchmarks](https://github.com/spark-optimizations/benchmarks)
 
-  - This repository contains implementation of broadcast join on spark RDDs
+  - This repository contains benchmarking code for broadcast join
 
 
 # Authors
