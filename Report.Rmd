@@ -288,7 +288,7 @@ plot_vs_time <- function(plot_d, title, xLabel, yLabel) {
 
 ## Optimization 2: Broadcast Join
 
-**Hypothesis**: Out of two RDDs on which join is to be performed, if one RDD is much smaller than the other and it can fit in memory, then broadcasting the small RDD to all the nodes and then performing join reduces the amount of data being shuffled and improves join performance.
+**Hypothesis**: Out of two RDDs on which join is to be performed, if one RDD is much smaller than the other and it can fit in memory, then broadcasting the small RDD to all the nodes and then performing map-side join reduces the amount of data being shuffled and improves join performance.
 
 ```{r cache=TRUE,echo=F, results = 'asis', warning=F, message=F}
 data_path <- 'benchmarks/output/stats/'
@@ -312,7 +312,7 @@ vs_rs_shuffle_exec <- raw_to_plot_data_exec(vs_rs_shuffle_exec, "Shuffle", 1)
 
 ### Approach
 
-Spark's join function by default performs a reduce-side join. Meaning, it shuffles records from both target RDDs having same keys to one node and then combines their data. But in situations where one of the RDDs is much smaller, this smaller RDD can be broadcast to all the nodes. Once the smaller RDD is transferred to each node, both RDDs can be joined by adding map stages. This eliminates an extra reduce step that is required in reduce-side joins. Although, broadcast join includes sending data to all the nodes upfront, it saves the bigger RDD from being shuffled. This is equivalent to performing a map-side join instead of spark's reduce-side join.
+Spark's join function by default performs a reduce-side join. Meaning, it shuffles records from both target RDDs having same keys to one node and then combines their data. But in situations where one of the RDDs is much smaller, this smaller RDD can be grouped and broadcast to all the nodes. Once the smaller RDD is transferred to each node, both RDDs can be joined by adding map stages. This eliminates an extra reduce step that is required in reduce-side joins. Although, broadcast join includes sending data to all the nodes upfront, it saves the bigger RDD from being shuffled. This is equivalent to performing a map-side join instead of spark's reduce-side join.
 
 The key components in this proposed approach are:
 
@@ -322,15 +322,15 @@ Estimating the size of target RDDs is instrumental in performing broadcast join.
 
 $estimated\_size = size(N) \times R / N$
 
-Where $R$ is total number of rows in the RDD, and $size(N)$ gives size of $N$ sample rows fetched from each partition.
+Where $R$ is total number of rows in the RDD, and $size(N)$ gives total size of $N$ sample rows fetched from each partition.
 
 Since this is an heuristic approach, it is prone to underestimation when rows contain variable number of columns. In such cases broadcasting an RDD might result in ungraceful job failure. Therefore, we keep the estimator configurable for the user, so that user can provide a custom size estimator according to data.
 
-Moreover, broadcast join requires that the small RDD can fit in memory on all the nodes. We assumed this property to be a configuration setting of cluster and we kept memory threshold configurable as well. If size of an RDD obtained using the given estimator, is smaller than the memory threshold, we perform broadcast join, otherwise spark's default shuffle-join is performed.
+Moreover, broadcast join requires that the small RDD can fit in memory on all the nodes. We assumed this property to be a configuration setting of a cluster and we kept memory threshold configurable as well. If size of an RDD obtained using the given estimator is smaller than the memory threshold, we perform broadcast join; otherwise Spark's default shuffle-join is performed.
 
 **2. Performing map-side join**
 
-If one of the target RDDs is determined to be smaller than threshold by Size Estimator, we broadcast it to all nodes to be cached. Once cached we only need to map through the bigger RDD to lookup its keys in the cache to join records. This in turn eliminates shuffling of bigger RDD and a reduce stage.
+If one of the target RDDs is determined to be smaller than threshold by Size Estimator, we groupByKey and broadcast it to all nodes to be cached. Once cached, we only need to map through the bigger RDD to lookup its keys in the cache to join records. This in turn eliminates shuffling of bigger RDD and a reduce stage.
 
 ```{r cache=TRUE,echo=F, results = 'asis', warning=F, message=F, fig.align="center", fig.width=12, fig.height=3}
 big_plot_d <- union(big_bj_exec, big_shuffle_exec)
@@ -370,16 +370,11 @@ The **second scenario** is less ideal for broadcast join. In this scenario, both
 
 To understand the ideal broadcast size for small RDD, we keep big RDD constant and vary the size of small RDD and plot the execution time of join operation for different sizes of small RDD. Figure 4(b) shows execution times for this set up. Here, broadcast join times are marked as triangles and shuffle join times are marked as squares. With our local configuration, we observed that once the size of broadcast RDD increases 256MB performance gains obtained using broadcast join start diminishing and shuffle join improves.
 
-### Limitations
-
-- Broadcast join is only useful when one of the RDDs can fit in memory.
-- If both the RDDs are bigger than memory threshold, broadcast join incurs extra cost of performing size estimation on both the RDDs.
-
 # Conclusion
 
-1. Why spark doesn't do this optimization? We started our project with this simple question. We found that for doing any optimization like this spark needs access to source code and recompile lambdas and/or functions to an optimal code.
+1. Why doesn't Spark perform column pruning on RDD joins? We started our project with this simple question. We found that for doing any optimization like this Spark needs access to source code and recompile lambdas and/or functions to an optimal code.
 1. We also found Scala compiler plugin could prove to be a very useful Spark companion in optimizing job and with considerable shuffle saves for poorly written jobs. Provided appropriate documentations become available for Scala compiler plugin for new developers to get onboarded.
-1. Broadcast Join seems to outperform shuffle join when one RDD is small than $256 mb$ in our tests. It could prove very useful in case of unknown RDD sizes, when actual RDD size is suspected to be small while writing the job. 
+1. Broadcast Join seems to outperform shuffle join when one RDD is smaller than $256 mb$ in our tests. It could prove very useful in case of unknown RDD sizes, when actual RDD size is suspected to be small while writing the job. 
 
 # Future Work
 
