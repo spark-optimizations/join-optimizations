@@ -205,7 +205,7 @@ Fig 3 also shows the delta for shuffle data between both control and plugin benc
 tx <- textGrob("Total # of columns", gp = gpar(fontface = 3L, fontsize = 8))
 ty <- textGrob("Used # of columns", gp = gpar(fontface = 3L, fontsize = 8), rot=90)
 
-g1 <- show_run_plots("real", metricName="Time", unit="ms", scale=1, round=1, hColor="maroon", showx=F)
+g1 <- show_run_plots("real", metricName="Time", unit="s", scale=1, round=1, hColor="maroon", showx=F)
 g2 <- show_run_plots("shuffle", metricName="Shuffle", unit="kb ", scale=1024, round=0, hColor="royalblue", showx=T)
 
 g3 <- arrangeGrob(g1, g2, tx, nrow=3, heights = c(10, 10, 1))
